@@ -11,7 +11,7 @@ use std::time::Duration;
 const SERVER_TCP_ADDR: &str = "0.0.0.0:5555";
 const SERVER_VPN_IP: &str = "10.8.0.1";
 const CLIENT_VPN_IP: &str = "10.8.0.2";
-const CLIENT_TCP_CONNECT_ADDR: &str = "192.168.56.101:5555";
+const CLIENT_TCP_CONNECT_ADDR: &str = "192.168.56.2:5555";
 const VPN_MASK: &str = "255.255.0.0";
 const VPN_IFACE: &str = "tun-vpn";
 const NET_IFACE: &str = "enp0s8";
