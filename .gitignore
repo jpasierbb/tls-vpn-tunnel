@@ -53,3 +53,29 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# target/ - katalog zbudowanych binarek (duży i zbędny w repozytorium)
+target/
+
+# Pliki tymczasowe edytorów
+**/*.rs.bk
+**/*~
+**/#*#
+**/.#*
+**/*.swp
+**/*.swo
+
+# IntelliJ/CLion/RustRover (JetBrains)
+.idea/
+
+# VS Code
+.vscode/
+
+# MacOS pliki systemowe
+.DS_Store
+
+# Logi
+*.log
+
+# Tymczasowe pliki cargo
+Cargo.lock
