@@ -11,18 +11,19 @@ fn main() {
 
     net::ifconfig_tun(&iface.name, "10.8.0.2/16", 1500);
     net::setup_routing(&iface.name);
+    net::setup_iptables("enp0s8", &iface.name);
 
-    // Ctrl+C and cleanup
+    // Ctrl+C handler
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
 
     ctrlc::set_handler(move || {
         println!("\nCaught Ctrl+C, cleaning up...");
+        net::cleanup_iptables("enp0s8", "tun-vpn");
         net::cleanup_routing("tun-vpn");
         process::exit(0);
     }).expect("Error setting Ctrl+C handler");
 
-    // Waiting
     println!("Press Ctrl+C to exit.");
     while r.load(Ordering::SeqCst) {
         std::thread::sleep(std::time::Duration::from_secs(1));

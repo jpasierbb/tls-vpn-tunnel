@@ -30,3 +30,15 @@ pub fn cleanup_routing(name: &str) {
     run_cmd(&format!("ip route del 0/1 dev {}", name));
     run_cmd(&format!("ip route del 128/1 dev {}", name));
 }
+
+pub fn setup_iptables(external_iface: &str, tun_iface: &str) {
+    run_cmd(&format!("iptables -t nat -A POSTROUTING -o {} -j MASQUERADE", external_iface));
+    run_cmd(&format!("iptables -A FORWARD -i {} -o {} -j ACCEPT", tun_iface, external_iface));
+    run_cmd(&format!("iptables -A FORWARD -i {} -o {} -m state --state RELATED,ESTABLISHED -j ACCEPT", external_iface, tun_iface));
+}
+
+pub fn cleanup_iptables(external_iface: &str, tun_iface: &str) {
+    run_cmd(&format!("iptables -t nat -D POSTROUTING -o {} -j MASQUERADE", external_iface));
+    run_cmd(&format!("iptables -D FORWARD -i {} -o {} -j ACCEPT", tun_iface, external_iface));
+    run_cmd(&format!("iptables -D FORWARD -i {} -o {} -m state --state RELATED,ESTABLISHED -j ACCEPT", external_iface, tun_iface));
+}
