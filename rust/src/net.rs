@@ -31,14 +31,28 @@ pub fn cleanup_routing(name: &str) {
     run_cmd(&format!("ip route del 128/1 dev {}", name));
 }
 
-pub fn setup_iptables(external_iface: &str, tun_iface: &str) {
-    run_cmd(&format!("iptables -t nat -A POSTROUTING -o {} -j MASQUERADE", external_iface));
-    run_cmd(&format!("iptables -A FORWARD -i {} -o {} -j ACCEPT", tun_iface, external_iface));
-    run_cmd(&format!("iptables -A FORWARD -i {} -o {} -m state --state RELATED,ESTABLISHED -j ACCEPT", external_iface, tun_iface));
+pub fn setup_iptables_server() {
+    run_cmd("sysctl -w net.ipv4.ip_forward=1");
+    run_cmd("iptables -t nat -A POSTROUTING -s 10.8.0.0/16 ! -d 10.8.0.0/16 -m comment --comment 'vpndemo' -j MASQUERADE");
+    run_cmd("iptables -A FORWARD -s 10.8.0.0/16 -m state --state RELATED,ESTABLISHED -j ACCEPT");
+    run_cmd("iptables -A FORWARD -d 10.8.0.0/16 -j ACCEPT");
 }
 
-pub fn cleanup_iptables(external_iface: &str, tun_iface: &str) {
-    run_cmd(&format!("iptables -t nat -D POSTROUTING -o {} -j MASQUERADE", external_iface));
-    run_cmd(&format!("iptables -D FORWARD -i {} -o {} -j ACCEPT", tun_iface, external_iface));
-    run_cmd(&format!("iptables -D FORWARD -i {} -o {} -m state --state RELATED,ESTABLISHED -j ACCEPT", external_iface, tun_iface));
+pub fn cleanup_iptables_server() {
+    run_cmd("iptables -t nat -D POSTROUTING -s 10.8.0.0/16 ! -d 10.8.0.0/16 -m comment --comment 'vpndemo' -j MASQUERADE");
+    run_cmd("iptables -D FORWARD -s 10.8.0.0/16 -m state --state RELATED,ESTABLISHED -j ACCEPT");
+    run_cmd("iptables -D FORWARD -d 10.8.0.0/16 -j ACCEPT");
+}
+
+pub fn setup_iptables_client(name: &str) {
+    run_cmd("sysctl -w net.ipv4.ip_forward=1");
+    run_cmd(&format!("iptables -t nat -A POSTROUTING -o {} -j MASQUERADE", name));
+    run_cmd(&format!("iptables -I FORWARD 1 -i {} -m state --state RELATED,ESTABLISHED -j ACCEPT", name));
+    run_cmd(&format!("iptables -I FORWARD 1 -o {} -j ACCEPT", name));
+}
+
+pub fn cleanup_iptables_client(name: &str) {
+    run_cmd(&format!("iptables -t nat -D POSTROUTING -o {} -j MASQUERADE", name));
+    run_cmd(&format!("iptables -D FORWARD -i {} -m state --state RELATED,ESTABLISHED -j ACCEPT", name));
+    run_cmd(&format!("iptables -D FORWARD -o {} -j ACCEPT", name));
 }
