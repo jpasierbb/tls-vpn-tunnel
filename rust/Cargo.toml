@@ -7,3 +7,6 @@ edition = "2024"
 tun = "0.4"
 ctrlc = "3"
 nix = "0.27"
+
+rustls = "0.21"
+rustls-pemfile = "1.0"
