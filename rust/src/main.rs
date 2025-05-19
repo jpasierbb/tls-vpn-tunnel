@@ -2,6 +2,7 @@ mod tun;
 mod net;
 mod server;
 mod client;
+mod tls;
 
 use ctrlc;
 use std::env;
