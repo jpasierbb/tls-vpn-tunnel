@@ -1,52 +1,46 @@
-use std::net::TcpStream;
 use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::sync::{Arc, Mutex};
+use anyhow::Result;
+use nix::unistd::{read as nix_read, write as nix_write};
+use openssl::ssl::{SslConnector, SslMethod};
 use crate::tun::TunInterface;
-use nix::unistd::read as nix_read;
-use nix::unistd::write as nix_write;
 
-pub fn run_client(addr: &str, tun: &TunInterface) {
-    let mut stream = TcpStream::connect(addr).expect("Failed to connect to server");
-    println!("Connected to server at {}", addr);
+pub fn run_client(addr: &str, tun: &TunInterface) -> Result<()> {
+    // 1) Konfiguracja TLS
+    let mut builder = SslConnector::builder(SslMethod::tls())?;
+    builder.set_ca_file("dummy_certs/cert.pem")?;
+    let connector = Arc::new(builder.build());
 
-    let mut stream_clone = stream.try_clone().expect("Failed to clone TCP stream");
+    // 2) Nawiąż TCP
+    let tcp = TcpStream::connect(addr)?;
+    println!("Connected to {}", addr);
+
+    // 3) Handshake TLS
+    let tls_stream = connector.connect("vpn", tcp)?;
+    let tls = Arc::new(Mutex::new(tls_stream));
     let tun_fd = tun.fd();
 
-    // TUN -> TCP
-    let tun_thread = std::thread::spawn(move || {
-        let mut buf = [0u8; 1500];
-        loop {
-            match nix_read(tun_fd, &mut buf) {
-                Ok(n) => {
-                    if let Err(e) = stream_clone.write_all(&buf[..n]) {
-                        eprintln!("Failed to write to TCP: {}", e);
-                        break;
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error reading from TUN: {}", e);
-                    break;
-                }
+    // 4) TUN -> TLS
+    {
+        let tls_writer = Arc::clone(&tls);
+        std::thread::spawn(move || -> Result<()> {
+            let mut buf = [0u8; 1500];
+            loop {
+                let n = nix_read(tun_fd, &mut buf)?;
+                let mut guard = tls_writer.lock().unwrap();
+                guard.write_all(&buf[..n])?;
             }
-        }
-    });
-
-    // TCP -> TUN
-    let mut buf = [0u8; 1500];
-    loop {
-        match stream.read(&mut buf) {
-            Ok(0) => break, // EOF
-            Ok(n) => {
-                if let Err(e) = nix_write(tun_fd, &buf[..n]) {
-                    eprintln!("Failed to write to TUN: {}", e);
-                    break;
-                }
-            }
-            Err(e) => {
-                eprintln!("Error reading from TCP: {}", e);
-                break;
-            }
-        }
+        });
     }
 
-    let _ = tun_thread.join();
+    // 5) TLS -> TUN
+    let mut buf = [0u8; 1500];
+    loop {
+        let n = {
+            let mut guard = tls.lock().unwrap();
+            guard.read(&mut buf)?
+        };
+        nix_write(tun_fd, &buf[..n])?;
+    }
 }
