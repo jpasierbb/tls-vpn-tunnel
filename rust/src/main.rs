@@ -15,7 +15,7 @@ const SERVER_VPN_IP: &str = "10.8.0.1";
 const CLIENT_VPN_IP: &str = "10.8.0.2";
 const CLIENT_TCP_CONNECT_ADDR: &str = "192.168.56.140:5555";
 const VPN_MASK: &str = "255.255.0.0";
-const VPN_IFACE: &str = "tun0"; // <- MUSI być tun0, bo iptables na to wskazuje
+const VPN_IFACE: &str = "tun0";
 
 fn main() {
     let args: Vec<String> = env::args().collect();
