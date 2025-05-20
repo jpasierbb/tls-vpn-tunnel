@@ -8,4 +8,4 @@ tun = "0.4"
 ctrlc = "3"
 nix = "0.27"
 anyhow  = "1.0"
-openssl = { version = "0.10", features = ["vendored"] }
+openssl = "0.10"

@@ -1,46 +1,95 @@
-use std::io::{Read, Write};
+// src/client.rs
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
-use anyhow::Result;
-use nix::unistd::{read as nix_read, write as nix_write};
-use openssl::ssl::{SslConnector, SslMethod};
-use crate::tun::TunInterface;
+use std::io::{Read, Write};
 
-pub fn run_client(addr: &str, tun: &TunInterface) -> Result<()> {
-    // 1) Konfiguracja TLS
-    let mut builder = SslConnector::builder(SslMethod::tls())?;
-    builder.set_ca_file("dummy_certs/cert.pem")?;
+use crate::tun::TunInterface;
+use nix::unistd::{read as nix_read, write as nix_write};
+use openssl::ssl::{SslConnector, SslMethod, SslStream};
+
+pub fn run_client(addr: &str, tun: &TunInterface) {
+    println!("[Client] Initializing TLS connector");
+    let mut builder = SslConnector::builder(SslMethod::tls())
+        .expect("failed to create Connector builder");
+    builder
+        .set_ca_file("dummy_certs/cert.pem")
+        .expect("failed to load CA");
     let connector = Arc::new(builder.build());
 
-    // 2) Nawiąż TCP
-    let tcp = TcpStream::connect(addr)?;
-    println!("Connected to {}", addr);
+    println!("[Client] Connecting TCP to {}", addr);
+    let stream = match TcpStream::connect(addr) {
+        Ok(s) => {
+            println!("[Client] TCP connected to {}", addr);
+            s
+        }
+        Err(e) => {
+            eprintln!("[Client] TCP connect error: {}", e);
+            return;
+        }
+    };
 
-    // 3) Handshake TLS
-    let tls_stream = connector.connect("vpn", tcp)?;
-    let tls = Arc::new(Mutex::new(tls_stream));
+    let host = addr.splitn(2, ':').next().unwrap();
+    println!("[Client] Performing TLS handshake with SNI = {}", host);
+    let ssl_stream: SslStream<TcpStream> =
+        match connector.connect(host, stream) {
+            Ok(s) => {
+                println!("[Client] TLS handshake succeeded");
+                s
+            }
+            Err(e) => {
+                eprintln!("[Client] TLS handshake failed: {}", e);
+                return;
+            }
+        };
+    let tls = Arc::new(Mutex::new(ssl_stream));
     let tun_fd = tun.fd();
 
-    // 4) TUN -> TLS
+    // TUN -> TLS
     {
-        let tls_writer = Arc::clone(&tls);
-        std::thread::spawn(move || -> Result<()> {
+        let tls_writer = tls.clone();
+        std::thread::spawn(move || {
+            println!("[Client] TUN->TLS thread started");
             let mut buf = [0u8; 1500];
             loop {
-                let n = nix_read(tun_fd, &mut buf)?;
+                let n = match nix_read(tun_fd, &mut buf) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("[Client] TUN read error: {}", e);
+                        break;
+                    }
+                };
+                println!("[Client] Read {} bytes from TUN, writing to TLS", n);
                 let mut guard = tls_writer.lock().unwrap();
-                guard.write_all(&buf[..n])?;
+                if let Err(e) = guard.write_all(&buf[..n]) {
+                    eprintln!("[Client] TLS write error: {}", e);
+                    break;
+                }
+                guard.flush().expect("tls flush failed");
+
             }
+            println!("[Client] TUN->TLS thread exiting");
         });
     }
 
-    // 5) TLS -> TUN
+    // TLS -> TUN
+    println!("[Client] Entering TLS->TUN loop");
     let mut buf = [0u8; 1500];
     loop {
         let n = {
             let mut guard = tls.lock().unwrap();
-            guard.read(&mut buf)?
+            match guard.read(&mut buf) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("[Client] TLS read error: {}", e);
+                    break;
+                }
+            }
         };
-        nix_write(tun_fd, &buf[..n])?;
+        println!("[Client] Read {} bytes from TLS, writing to TUN", n);
+        if let Err(e) = nix_write(tun_fd, &buf[..n]) {
+            eprintln!("[Client] TUN write error: {}", e);
+            break;
+        }
     }
+    println!("[Client] Connection handler exiting");
 }
