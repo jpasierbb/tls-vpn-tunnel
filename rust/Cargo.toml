@@ -6,6 +6,6 @@ edition = "2024"
 [dependencies]
 tun = "0.4"
 ctrlc = "3"
-nix = "0.27"
+nix = { version = "0.27", features = ["fs", "poll"] }
 anyhow  = "1.0"
 openssl = "0.10"

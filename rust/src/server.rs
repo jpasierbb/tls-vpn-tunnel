@@ -1,11 +1,13 @@
-// src/server.rs
 use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
+use std::os::unix::io::{AsRawFd, BorrowedFd};
+use std::sync::Arc;
 use std::io::{Read, Write};
 
 use crate::tun::TunInterface;
+use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::poll::{poll, PollFd, PollFlags};
 use nix::unistd::{read as nix_read, write as nix_write};
-use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod, SslStream};
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
 pub fn run_server(addr: &str, tun: &TunInterface) {
     println!("[Server] Initializing TLS acceptor");
@@ -25,72 +27,58 @@ pub fn run_server(addr: &str, tun: &TunInterface) {
     for stream in listener.incoming() {
         let stream = match stream {
             Ok(s) => s,
-            Err(e) => {
-                eprintln!("[Server] TCP accept error: {}", e);
-                continue;
-            }
+            Err(e) => { eprintln!("[Server] TCP accept error: {}", e); continue; }
         };
         let peer = stream.peer_addr().ok();
-        println!("[Server] New TCP connection from {:?}", peer);
+        println!("[Server] New connection from {:?}", peer);
 
         let acceptor = acceptor.clone();
         let tun_fd = tun.fd();
         std::thread::spawn(move || {
-            println!("[Server:{:?}] Starting TLS handshake", peer);
-            let ssl_stream: SslStream<std::net::TcpStream> =
-                acceptor.accept(stream).expect("TLS accept failed");
-            println!("[Server:{:?}] TLS handshake completed", peer);
+            println!("[Server:{:?}] Performing TLS handshake", peer);
+            let mut ssl_stream = acceptor.accept(stream).expect("TLS accept failed");
+            println!("[Server:{:?}] Handshake done", peer);
 
-            let tls = Arc::new(Mutex::new(ssl_stream));
+            fcntl(tun_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).unwrap();
+            ssl_stream.get_ref()
+                .set_nonblocking(true)
+                .unwrap();
 
-            // TUN -> TLS
-            {
-                let tls_writer = tls.clone();
-                std::thread::spawn(move || {
-                    println!("[Server:{:?}] TUN->TLS thread started", peer);
-                    let mut buf = [0u8; 1500];
-                    loop {
-                        let n = match nix_read(tun_fd, &mut buf) {
-                            Ok(n) => n,
-                            Err(e) => {
-                                eprintln!("[Server:{:?}] TUN read error: {}", peer, e);
-                                break;
-                            }
-                        };
-                        println!("[Server:{:?}] Read {} bytes from TUN, writing to TLS", peer, n);
-                        let mut guard = tls_writer.lock().unwrap();
-                        if let Err(e) = guard.write_all(&buf[..n]) {
-                            eprintln!("[Server:{:?}] TLS write error: {}", peer, e);
-                            break;
-                        }
-                        guard.flush().expect("tls flush failed");
-
-                    }
-                    println!("[Server:{:?}] TUN->TLS thread exiting", peer);
-                });
-            }
-
-            // TLS -> TUN
-            println!("[Server:{:?}] Entering TLS->TUN loop", peer);
             let mut buf = [0u8; 1500];
+            println!("[Server:{:?}] Entering poll loop", peer);
+
             loop {
-                let n = {
-                    let mut guard = tls.lock().unwrap();
-                    match guard.read(&mut buf) {
-                        Ok(n) => n,
-                        Err(e) => {
-                            eprintln!("[Server:{:?}] TLS read error: {}", peer, e);
-                            break;
+                let bf_tun = unsafe { BorrowedFd::borrow_raw(tun_fd) };
+                let bf_tcp = unsafe { BorrowedFd::borrow_raw(ssl_stream.get_ref().as_raw_fd()) };
+                let mut fds = [
+                    PollFd::new(&bf_tun, PollFlags::POLLIN),
+                    PollFd::new(&bf_tcp, PollFlags::POLLIN),
+                ];
+                poll(&mut fds, -1).unwrap();
+
+                // TUN -> TLS
+                if let Some(re) = fds[0].revents() {
+                    if re.contains(PollFlags::POLLIN) {
+                        if let Ok(n) = nix_read(tun_fd, &mut buf) {
+                            if n > 0 {
+                                let _ = ssl_stream.write_all(&buf[..n]);
+                                let _ = ssl_stream.flush();
+                            }
                         }
                     }
-                };
-                println!("[Server:{:?}] Read {} bytes from TLS, writing to TUN", peer, n);
-                if let Err(e) = nix_write(tun_fd, &buf[..n]) {
-                    eprintln!("[Server:{:?}] TUN write error: {}", peer, e);
-                    break;
+                }
+
+                // TLS -> TUN
+                if let Some(re) = fds[1].revents() {
+                    if re.contains(PollFlags::POLLIN) {
+                        if let Ok(n) = ssl_stream.read(&mut buf) {
+                            if n > 0 {
+                                let _ = nix_write(tun_fd, &buf[..n]);
+                            }
+                        }
+                    }
                 }
             }
-            println!("[Server:{:?}] Connection handler exiting", peer);
         });
     }
 }
