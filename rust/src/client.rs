@@ -7,6 +7,7 @@ use crate::tun::TunInterface;
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::poll::{poll, PollFd, PollFlags};
 use nix::unistd::{read as nix_read, write as nix_write};
+use nix::errno::Errno;
 use openssl::ssl::{SslConnector, SslMethod};
 
 pub fn run_client(addr: &str, tun: &TunInterface) {
@@ -42,6 +43,7 @@ pub fn run_client(addr: &str, tun: &TunInterface) {
     let mut buf = [0u8; 1500];
     println!("[Client] Entering poll loop");
 
+
     loop {
         // Użycie BorrowedFd z unsafe borrow_raw
         let bf_tun = unsafe { BorrowedFd::borrow_raw(tun_fd) };
@@ -51,7 +53,22 @@ pub fn run_client(addr: &str, tun: &TunInterface) {
             PollFd::new(&bf_tun, PollFlags::POLLIN),
             PollFd::new(&bf_tcp, PollFlags::POLLIN),
         ];
-        poll(&mut fds, -1).expect("poll failed");
+
+        // poll(&mut fds, -1).expect("poll failed");
+        match poll(&mut fds, -1) {
+            Ok(_) => {
+                // wszystko OK,
+            }
+            Err(Errno::EINTR) => {
+                // przerwane sygnalem – konczymy run_client
+                println!("[Client] poll interupted, leaving run_client()");
+                return;
+            }
+            Err(e) => {
+                // inny blad/fatal
+                panic!("poll fatal error: {}", e);
+            }
+        }
 
         // TUN -> TLS
         if let Some(re) = fds[0].revents() {
