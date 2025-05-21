@@ -1,7 +1,7 @@
 # tls-vpn-tunnel
 
 # Generating certs
-Use below commands in the dummy_certs/ folder:
+Use below commands in the dummy_certs/ folder:  
 **openssl req -new -x509 -nodes \
   -config openssl.conf \
   -keyout key.pem \
